@@ -1,11 +1,9 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
+import plotly.express as px
 import folium
 from streamlit_folium import st_folium
-import japanize_matplotlib # 日本語文字化け対策
 
 # -------------------------------------------
 # ページ設定
@@ -104,25 +102,31 @@ if uploaded_file is not None:
         row1_col1, row1_col2 = st.columns([1, 1])
 
         with row1_col1:
-            st.subheader("📊 行動タイムライン")
+            st.subheader("📊 行動分析")
             
-            # 円グラフ
-            fig1, ax1 = plt.subplots(figsize=(6, 3))
+            # 円グラフ (Plotly)
             if stay_time + move_time > 0:
-                ax1.pie([stay_time, move_time], labels=['作業(滞在)', '移動'], autopct='%1.1f%%',
-                        colors=['#ef9a9a', '#90caf9'], startangle=90)
-                ax1.axis('equal') 
-                st.pyplot(fig1)
+                df_pie = pd.DataFrame({
+                    'status': ['作業(滞在)', '移動'],
+                    'minutes': [stay_time, move_time]
+                })
+                fig_pie = px.pie(df_pie, values='minutes', names='status', 
+                                 title='作業時間の割合',
+                                 color='status',
+                                 color_discrete_map={'作業(滞在)':'#ef5350', '移動':'#42a5f5'})
+                st.plotly_chart(fig_pie, use_container_width=True)
             else:
                 st.write("データ不足のためグラフ表示できません")
 
-            # タイムライン詳細表
-            st.write("▼ 詳細ログ")
-            display_cols = summary[['start_time', 'end_time', 'status', 'duration_min']].copy()
-            display_cols['start_time'] = display_cols['start_time'].dt.strftime('%H:%M')
-            display_cols['end_time'] = display_cols['end_time'].dt.strftime('%H:%M')
-            display_cols['duration_min'] = display_cols['duration_min'].astype(int).astype(str) + "分"
-            st.dataframe(display_cols, hide_index=True)
+            # タイムライン (Plotly Gantt)
+            st.write("▼ タイムライン詳細")
+            if len(summary) > 0:
+                fig_timeline = px.timeline(summary, x_start="start_time", x_end="end_time", 
+                                           y="status", color="status",
+                                           color_discrete_map={'滞在':'#ef5350', '移動':'#42a5f5'},
+                                           hover_data=["duration_min"])
+                fig_timeline.update_yaxes(autorange="reversed") # 上から順に
+                st.plotly_chart(fig_timeline, use_container_width=True)
 
         with row1_col2:
             st.subheader("🗺️ 軌跡マップ")
@@ -146,9 +150,7 @@ if uploaded_file is not None:
                 # 滞在ポイント（作業場所）にマーカー
                 stay_points = summary[summary['status'] == '滞在']
                 for _, row in stay_points.iterrows():
-                    # その期間の中間時点の座標を取得（簡易的）
                     mid_time = row['start_time'] + (row['end_time'] - row['start_time']) / 2
-                    # 近似の行を探す
                     nearest_row = df.iloc[(df['time'] - mid_time).abs().argsort()[:1]]
                     lat = nearest_row['lat'].values[0]
                     lon = nearest_row['lon'].values[0]

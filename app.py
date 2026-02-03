@@ -10,7 +10,7 @@ from streamlit_folium import st_folium
 # -------------------------------------------
 st.set_page_config(page_title="AI日報解析クラウド", layout="wide")
 st.title("🌲 AI日報 解析ダッシュボード v2.1")
-st.markdown("アップロードしたGPSログ（CSV）から’速度’を割り出し「手作業」「重機」「車両」3パターンに当てはめて各作業時間を自動解析します。")
+st.markdown("アップロードした１日分のGPSログ（CSV）から’速度’を割り出し「手作業」「重機」「車両」3パターンに当てはめて各作業時間を自動解析します。")
 
 # -------------------------------------------
 # 1. ファイルアップロード
@@ -180,5 +180,6 @@ if uploaded_file is not None:
 
     except Exception as e:
         st.error(f"エラーが発生しました: {e}")
+
 
 

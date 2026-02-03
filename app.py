@@ -9,8 +9,8 @@ from streamlit_folium import st_folium
 # ページ設定
 # -------------------------------------------
 st.set_page_config(page_title="AI日報解析クラウド", layout="wide")
-st.title("🌲 AI日報 解析ダッシュボード v2")
-st.markdown("GPSログ（CSV）をアップロードすると時速が1.5km未満→「手作業」、15.0km未満→「重機（クローラ系）」、それ以上→「車両（ホイール系）」の3パターンで自動解析します。")
+st.title("🌲 AI日報 解析ダッシュボード v2.1")
+st.markdown("CSVをアップロードすると’時速’から「手作業」「重機」「車両」の3パターンで自動解析します。")
 
 # -------------------------------------------
 # 1. ファイルアップロード
@@ -54,14 +54,14 @@ if uploaded_file is not None:
         df['speed_kmh'] = np.where((df['time_diff'] > 0) & (df['time_diff'] < 600), 
                                    (df['dist_m'] / df['time_diff']) * 3.6, 0)
 
-        # ★ここが新ロジック：3パターン判定
+        # 3パターン判定
         def classify_status(speed):
             if speed < 1.5:
                 return '手作業(滞在)'   # 緑
             elif speed < 15.0:
                 return '重機(クローラ)' # 橙
             else:
-                return '車両(ホイール)' # 青/赤
+                return '車両(ホイール)' # 赤
         
         df['status'] = df['speed_kmh'].apply(classify_status)
 
@@ -91,7 +91,16 @@ if uploaded_file is not None:
         # 4. 画面表示
         # -------------------------------------------
         
-        # KPIカード (3色に合わせる)
+        # 色と並び順の定義（ここが重要！）
+        color_map = {
+            '手作業(滞在)': '#66bb6a',   # 緑
+            '重機(クローラ)': '#ffa726', # オレンジ
+            '車両(ホイール)': '#ef5350'  # 赤
+        }
+        # 表示順序を固定するリスト
+        order_list = ['手作業(滞在)', '重機(クローラ)', '車両(ホイール)']
+
+        # KPIカード
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("🌲 手作業(滞在)", f"{int(time_hand)}分")
         c2.metric("🚜 重機(クローラ)", f"{int(time_crawler)}分")
@@ -102,13 +111,6 @@ if uploaded_file is not None:
 
         # レイアウト
         row1_col1, row1_col2 = st.columns([1, 1])
-
-        # 色定義
-        color_map = {
-            '手作業(滞在)': '#66bb6a',   # 緑
-            '重機(クローラ)': '#ffa726', # オレンジ
-            '車両(ホイール)': '#ef5350'  # 赤
-        }
 
         with row1_col1:
             st.subheader("📊 作業バランス")
@@ -122,10 +124,15 @@ if uploaded_file is not None:
                 # 0分の項目は消す
                 df_pie = df_pie[df_pie['minutes'] > 0]
                 
+                # 並び順を指定してソート（円グラフ用）
+                df_pie['status'] = pd.Categorical(df_pie['status'], categories=order_list, ordered=True)
+                df_pie = df_pie.sort_values('status')
+
                 fig_pie = px.pie(df_pie, values='minutes', names='status', 
                                  title='作業時間の割合',
                                  color='status',
-                                 color_discrete_map=color_map)
+                                 color_discrete_map=color_map,
+                                 category_orders={'status': order_list}) # 順序固定
                 st.plotly_chart(fig_pie, use_container_width=True)
             
             # タイムライン
@@ -134,7 +141,10 @@ if uploaded_file is not None:
                 fig_timeline = px.timeline(summary, x_start="start_time", x_end="end_time", 
                                            y="status", color="status",
                                            color_discrete_map=color_map,
-                                           hover_data=["duration_min"])
+                                           hover_data=["duration_min"],
+                                           category_orders={'status': order_list}) # 順序固定
+                
+                # Y軸の順序を反転（手作業を上に）
                 fig_timeline.update_yaxes(autorange="reversed")
                 st.plotly_chart(fig_timeline, use_container_width=True)
 
@@ -150,9 +160,8 @@ if uploaded_file is not None:
             if len(coords) > 0:
                 folium.PolyLine(coords, color="blue", weight=3, opacity=0.5).add_to(m)
                 
-                # 「手作業」の場所だけ緑の点を打つ（作業箇所の特定）
+                # 「手作業」の場所だけ緑の点を打つ
                 hand_df = df[df['status'] == '手作業(滞在)']
-                # 点が多すぎると重くなるので、適当に間引く（例: 5点に1点）
                 for _, row in hand_df.iloc[::5].iterrows():
                     folium.CircleMarker(
                         location=[row['lat'], row['lon']],
@@ -171,4 +180,3 @@ if uploaded_file is not None:
 
     except Exception as e:
         st.error(f"エラーが発生しました: {e}")
-

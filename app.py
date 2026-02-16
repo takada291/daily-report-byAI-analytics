@@ -9,8 +9,38 @@ from streamlit_folium import st_folium
 # ページ設定
 # -------------------------------------------
 st.set_page_config(page_title="AI日報解析クラウド", layout="wide")
-st.title("🌲 AI日報 解析ダッシュボード v2.1")
-st.markdown("アップロードした１日分のGPSログ（CSV）から’速度’を割り出し「手作業」「重機」「車両」3パターンに当てはめて各作業時間を自動解析します。")
+st.title("🌲 AI日報 解析ダッシュボード v2.2")
+st.markdown("アップロードしたGPSログから速度を算出し、「手作業」「重機」「車両」の3パターンで作業時間を自動解析します。")
+
+# -------------------------------------------
+# サイドバー設定（閾値スライダー）
+# -------------------------------------------
+st.sidebar.header("⚙️ 解析設定")
+st.sidebar.markdown("作業内容を判定する「速度の境界線」を調整できます。")
+
+# デフォルト値
+default_hand_limit = 1.5
+default_crawler_limit = 15.0
+
+# スライダーの設置
+hand_threshold = st.sidebar.slider(
+    "手作業の上限速度 (km/h)",
+    min_value=0.5, max_value=5.0, value=default_hand_limit, step=0.1,
+    help="これより遅い動きを「手作業（滞在）」とみなします。"
+)
+
+crawler_threshold = st.sidebar.slider(
+    "重機移動の上限速度 (km/h)",
+    min_value=5.0, max_value=30.0, value=default_crawler_limit, step=1.0,
+    help="これより遅い動きを「重機（クローラ）」、速い動きを「車両（ホイール）」とみなします。"
+)
+
+st.sidebar.info(f"""
+**現在の設定:**
+- 🟢 **手作業:** 0 ~ {hand_threshold} km/h
+- 🟠 **重機:** {hand_threshold} ~ {crawler_threshold} km/h
+- 🔴 **車両:** {crawler_threshold} km/h ~
+""")
 
 # -------------------------------------------
 # 1. ファイルアップロード
@@ -35,7 +65,7 @@ if uploaded_file is not None:
         df = df.sort_values('time')
         
         # -------------------------------------------
-        # 2. 解析ロジック（3ゾーン判定）
+        # 2. 解析ロジック（可変閾値対応）
         # -------------------------------------------
         
         def calc_distance(lat1, lon1, lat2, lon2):
@@ -54,11 +84,11 @@ if uploaded_file is not None:
         df['speed_kmh'] = np.where((df['time_diff'] > 0) & (df['time_diff'] < 600), 
                                    (df['dist_m'] / df['time_diff']) * 3.6, 0)
 
-        # 3パターン判定
+        # 3パターン判定（スライダーの値を使用）
         def classify_status(speed):
-            if speed < 1.5:
+            if speed < hand_threshold:
                 return '手作業(滞在)'   # 緑
-            elif speed < 15.0:
+            elif speed < crawler_threshold:
                 return '重機(クローラ)' # 橙
             else:
                 return '車両(ホイール)' # 赤
@@ -91,13 +121,12 @@ if uploaded_file is not None:
         # 4. 画面表示
         # -------------------------------------------
         
-        # 色と並び順の定義（ここが重要！）
+        # 色と並び順の定義
         color_map = {
             '手作業(滞在)': '#66bb6a',   # 緑
             '重機(クローラ)': '#ffa726', # オレンジ
             '車両(ホイール)': '#ef5350'  # 赤
         }
-        # 表示順序を固定するリスト
         order_list = ['手作業(滞在)', '重機(クローラ)', '車両(ホイール)']
 
         # KPIカード
@@ -124,7 +153,7 @@ if uploaded_file is not None:
                 # 0分の項目は消す
                 df_pie = df_pie[df_pie['minutes'] > 0]
                 
-                # 並び順を指定してソート（円グラフ用）
+                # 並び順を指定してソート
                 df_pie['status'] = pd.Categorical(df_pie['status'], categories=order_list, ordered=True)
                 df_pie = df_pie.sort_values('status')
 
@@ -132,7 +161,7 @@ if uploaded_file is not None:
                                  title='作業時間の割合',
                                  color='status',
                                  color_discrete_map=color_map,
-                                 category_orders={'status': order_list}) # 順序固定
+                                 category_orders={'status': order_list})
                 st.plotly_chart(fig_pie, use_container_width=True)
             
             # タイムライン
@@ -142,9 +171,8 @@ if uploaded_file is not None:
                                            y="status", color="status",
                                            color_discrete_map=color_map,
                                            hover_data=["duration_min"],
-                                           category_orders={'status': order_list}) # 順序固定
+                                           category_orders={'status': order_list})
                 
-                # Y軸の順序を反転（手作業を上に）
                 fig_timeline.update_yaxes(autorange="reversed")
                 st.plotly_chart(fig_timeline, use_container_width=True)
 
@@ -155,14 +183,17 @@ if uploaded_file is not None:
             center_lon = df['lon'].mean()
             m = folium.Map(location=[center_lat, center_lon], zoom_start=14)
             
-            # 軌跡（全体）
+            # 軌跡
             coords = df[['lat', 'lon']].values.tolist()
             if len(coords) > 0:
                 folium.PolyLine(coords, color="blue", weight=3, opacity=0.5).add_to(m)
                 
-                # 「手作業」の場所だけ緑の点を打つ
+                # 「手作業」の場所だけ緑の点を打つ（スライダーで変化する手作業範囲に対応）
                 hand_df = df[df['status'] == '手作業(滞在)']
-                for _, row in hand_df.iloc[::5].iterrows():
+                # 点が多すぎる場合の軽量化（データ数に応じて間引き）
+                step = max(1, len(hand_df) // 100) 
+                
+                for _, row in hand_df.iloc[::step].iterrows():
                     folium.CircleMarker(
                         location=[row['lat'], row['lon']],
                         radius=3,
@@ -172,7 +203,6 @@ if uploaded_file is not None:
                         popup=f"{row['time'].strftime('%H:%M')}"
                     ).add_to(m)
                 
-                # 開始・終了
                 folium.Marker(coords[0], popup="開始", icon=folium.Icon(color='green', icon='play')).add_to(m)
                 folium.Marker(coords[-1], popup="終了", icon=folium.Icon(color='red', icon='stop')).add_to(m)
 
@@ -180,6 +210,3 @@ if uploaded_file is not None:
 
     except Exception as e:
         st.error(f"エラーが発生しました: {e}")
-
-
-
